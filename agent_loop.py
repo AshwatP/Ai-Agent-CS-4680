@@ -50,6 +50,7 @@ How to work:
 
 
 class EventKind(str, Enum):
+    THINKING = "thinking"            # about to call the LLM (UI shows a spinner)
     PLAN = "plan"                    # LLM's text alongside tool calls
     PROPOSED = "proposed"
     DENIED = "denied"                # failed validation
@@ -161,6 +162,7 @@ class Agent:
         for iteration in range(1, self.max_iterations + 1):
             result.iterations = iteration
             self.audit.log(AuditLogger.LLM_CALL, rid, iteration=iteration)
+            self._emit(EventKind.THINKING, rid, message=f"step {iteration}")
             try:
                 resp: LLMResponse = self.llm.complete(self.system_prompt, self.history, tools)
             except LLMError as exc:
