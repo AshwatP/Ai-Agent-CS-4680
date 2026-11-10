@@ -17,6 +17,7 @@ Run `python agent_loop.py "your request"` for a quick test without the full UI.
 
 from __future__ import annotations
 
+import platform
 import time
 from dataclasses import dataclass, field
 from datetime import date
@@ -36,6 +37,7 @@ Environment:
 - All file paths are relative to a sandboxed workspace folder.
 - A local SQLite database is available (call db_list_tables to see its schema).
 - Shell commands are limited to a small read-only allowlist.
+- Operating system: {os_name}.
 - Today's date is {today}.
 
 How to work:
@@ -135,7 +137,9 @@ class Agent:
         self.on_event = on_event or (lambda e: None)
         self.auto_yes = auto_yes
         self.max_iterations = max_iterations
-        self.system_prompt = system_prompt or SYSTEM_PROMPT.format(today=date.today().isoformat())
+        self.system_prompt = system_prompt or SYSTEM_PROMPT.format(
+            today=date.today().isoformat(), os_name=platform.system() or "unknown"
+        )
         self.history: list[Message] = []
 
     def reset(self) -> None:

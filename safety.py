@@ -15,6 +15,7 @@ circular imports; actions import the helper functions from here.
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 from dataclasses import dataclass
@@ -63,13 +64,31 @@ def resolve_in_workspace(path_str: str, workspace: Path) -> Path:
 
 # ---- Shell command policy ---------------------------------------------------
 
+#: Module-level so tests can simulate Windows on any OS.
+IS_WINDOWS: bool = os.name == "nt"
+
 #: Only these programs may run. All are read-only / informational.
+#: Unix tools + Windows equivalents; a command missing on this OS reports "not installed".
 ALLOWED_COMMANDS: frozenset[str] = frozenset(
-    {"ls", "pwd", "echo", "cat", "date", "whoami", "wc", "head", "tail", "python", "python3"}
+    {
+        "ls", "pwd", "echo", "cat", "date", "whoami", "wc", "head", "tail",  # Unix
+        "dir", "type", "where", "hostname", "ver",                           # Windows
+        "python", "python3",
+    }
 )
 
 #: Commands whose non-flag arguments are file paths that must stay in the workspace.
-PATH_ARG_COMMANDS: frozenset[str] = frozenset({"ls", "cat", "wc", "head", "tail"})
+PATH_ARG_COMMANDS: frozenset[str] = frozenset({"ls", "cat", "wc", "head", "tail", "dir", "type"})
+
+#: Built into cmd.exe (not separate programs); on Windows they run via `cmd /d /c`.
+WINDOWS_BUILTINS: frozenset[str] = frozenset({"dir", "type", "echo", "ver"})
+
+#: Windows-style switches like /b, /s, /a:h, /o:-d (deliberately short so that
+#: something like "/etc" is NOT treated as a switch and gets the path check).
+_WIN_SWITCH = re.compile(r"^/[A-Za-z?]{1,2}(:[A-Za-z-]+)?$")
+
+#: Characters cmd.exe treats specially (%VAR% expansion, ^ escapes, ! delayed expansion).
+_CMD_SPECIAL = re.compile(r'[%^!"]')
 
 #: Checked against the raw string BEFORE parsing. Commands run with shell=False,
 #: so operators wouldn't work anyway — rejecting them gives the LLM a clear reason.
@@ -95,7 +114,9 @@ def check_command(command: str, workspace: Path) -> list[str]:
             raise SafetyError(f"Blocked command: {reason}.")
 
     try:
-        argv = shlex.split(command)
+        # POSIX shlex treats "\" as an escape; on Windows it's the path separator,
+        # so double it first to keep `type notes\a.txt` intact.
+        argv = shlex.split(command.replace("\\", "\\\\") if IS_WINDOWS else command)
     except ValueError as exc:  # e.g. unbalanced quotes
         raise SafetyError(f"Could not parse command: {exc}.") from exc
     if not argv:
@@ -112,11 +133,22 @@ def check_command(command: str, workspace: Path) -> list[str]:
     if program in {"python", "python3"} and argv[1:] not in (["--version"], ["-V"]):
         raise SafetyError("python may only be run as 'python --version'.")
 
+    # Windows builtins go through cmd.exe, so forbid its expansion characters.
+    if IS_WINDOWS and program in WINDOWS_BUILTINS and _CMD_SPECIAL.search(" ".join(argv[1:])):
+        raise SafetyError("Characters % ^ ! \" are not allowed in Windows built-in commands.")
+
+    # `where` looks up program names only — no flags (e.g. /r would search the whole disk).
+    if program == "where" and any(not re.fullmatch(r"[\w.\-*]+", a) for a in argv[1:]):
+        raise SafetyError("'where' only accepts program names, e.g. 'where python'.")
+
     # File-reading commands can't escape the workspace (e.g. `cat /etc/passwd`).
     if program in PATH_ARG_COMMANDS:
         for arg in argv[1:]:
-            if not arg.startswith("-"):
-                resolve_in_workspace(arg, workspace)
+            if arg.startswith("-"):
+                continue
+            if IS_WINDOWS and _WIN_SWITCH.match(arg):
+                continue
+            resolve_in_workspace(arg, workspace)
 
     return argv
 

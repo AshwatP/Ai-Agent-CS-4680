@@ -5,13 +5,15 @@ actions/shell.py — Run an allowlisted command (no shell, timeout, workspace cw
 from __future__ import annotations
 
 import os
+import platform
 import shutil
 import subprocess
 from typing import Any
 
+import safety
 from actions.base import Action, ActionContext
 from models import ActionResult, RiskLevel
-from safety import ALLOWED_COMMANDS, check_command
+from safety import ALLOWED_COMMANDS, WINDOWS_BUILTINS, check_command
 
 _SECRET_HINTS = ("KEY", "SECRET", "TOKEN", "PASSWORD")
 
@@ -24,8 +26,10 @@ def _scrubbed_env() -> dict[str, str]:
 class RunCommand(Action):
     name = "run_command"
     description = (
-        "Run a simple read-only system command in the workspace folder. "
-        f"Allowed programs: {', '.join(sorted(ALLOWED_COMMANDS))}. "
+        f"Run a simple read-only system command in the workspace folder. "
+        f"This computer runs {platform.system() or 'an unknown OS'}, so use commands for that OS "
+        "(Windows: dir, type, where, hostname, ver; macOS/Linux: ls, cat, wc, head, tail). "
+        f"Full allowlist: {', '.join(sorted(ALLOWED_COMMANDS))}. "
         "No pipes, redirects, or chaining. File arguments must be inside the workspace."
     )
     risk = RiskLevel.MODERATE
@@ -52,11 +56,17 @@ class RunCommand(Action):
 
     def execute(self, p: dict[str, Any], ctx: ActionContext) -> ActionResult:
         argv = check_command(p["command"], ctx.workspace)  # defense in depth
-        if shutil.which(argv[0]) is None:
+        if safety.IS_WINDOWS and argv[0] in WINDOWS_BUILTINS:
+            # dir/type/echo/ver live inside cmd.exe. /d skips AutoRun scripts.
+            # Shell operators and cmd special characters were rejected by check_command.
+            exec_argv = ["cmd", "/d", "/c", *argv]
+        elif shutil.which(argv[0]) is None:
             return ActionResult.fail(f"'{argv[0]}' is not installed on this system.")
+        else:
+            exec_argv = argv
         try:
             proc = subprocess.run(
-                argv,
+                exec_argv,
                 shell=False,               # never interpret shell syntax
                 cwd=ctx.workspace,
                 capture_output=True,
