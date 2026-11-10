@@ -75,7 +75,7 @@ def load_settings(env_file: str | Path | None = ".env") -> Settings:
 
     return Settings(
         api_key=os.getenv("ANTHROPIC_API_KEY"),
-        model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5"),
+        model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-5-5"),
         workspace=workspace,
         log_path=log_path,
         max_iterations=_int_env("AGENT_MAX_ITERATIONS", 10),
