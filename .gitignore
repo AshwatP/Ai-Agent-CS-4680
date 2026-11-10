@@ -222,3 +222,4 @@ __marimo__/
 logs/
 workspace/
 *.db
+ignore/
